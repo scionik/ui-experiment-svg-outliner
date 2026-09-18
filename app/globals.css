@@ -17,3 +17,56 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* Colour swatch: just the colour, rounded, no native frame. */
+.swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.swatch::-webkit-color-swatch {
+  border: 0;
+  border-radius: 10px;
+}
+.swatch::-moz-color-swatch {
+  border: 0;
+  border-radius: 10px;
+}
+
+/* Zoom slider: grey track, white round thumb with a grey ring. */
+.zoom-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: #9a9a9a;
+  outline: none;
+  cursor: pointer;
+}
+.zoom-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 5px solid #9a9a9a;
+}
+.zoom-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 5px solid #9a9a9a;
+}
+.zoom-range:focus-visible::-webkit-slider-thumb {
+  border-color: #171717;
+}

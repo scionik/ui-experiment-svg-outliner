@@ -4,12 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { outlineSvg, type SvgWarning } from "unstroke";
 import { weldTouchingCaps } from "@/lib/weld";
 import { applySize } from "@/lib/resize";
+import { iconDims } from "@/lib/dims";
+import { ColorField, LinkToggle, NumberField, ZoomSlider } from "./Controls";
+import { Inspector } from "./Inspector";
 
 type Item = { id: string; name: string; source: string };
 
 type Result =
   | { ok: true; svg: string; warnings: string[] }
   | { ok: false; message: string };
+
+const DEFAULT_FILL = "#2A2A2A";
 
 const toDataUri = (svg: string) =>
   `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -27,6 +32,8 @@ const dimensions = (svg: string) => {
   return w && h ? `${w} × ${h} px` : "";
 };
 
+const round3 = (n: number) => String(Number(n.toFixed(3)));
+
 const download = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -41,11 +48,14 @@ export function Converter() {
   const [results, setResults] = useState<Record<string, Result>>({});
   const [dragging, setDragging] = useState(false);
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [inspectId, setInspectId] = useState<string | null>(null);
 
-  const [fill, setFill] = useState("currentColor");
-  const [strokeWidth, setStrokeWidth] = useState("");
-  const [size, setSize] = useState("");
+  const [fill, setFill] = useState(DEFAULT_FILL);
+  const [width, setWidth] = useState(""); // export width in px, "" keeps each icon's own
+  const [stroke, setStroke] = useState(""); // stroke in px at the export width, "" keeps each icon's own
+  const [linked, setLinked] = useState(true);
   const [includeFills, setIncludeFills] = useState(true);
+  const [zoom, setZoom] = useState(1);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(0);
@@ -68,14 +78,17 @@ export function Converter() {
     setItems((prev) => [...prev, ...loaded]);
   }, []);
 
-  const options = useMemo(() => {
-    const width = parseFloat(strokeWidth);
-    return {
-      fill: fill.trim() || "currentColor",
-      strokeWidth: width > 0 ? width : undefined,
+  // The stroke is typed in px at the export size, so it depends on the width
+  // too. The width only matters for conversion when a stroke is set.
+  const options = useMemo(
+    () => ({
+      fill: fill.trim() || DEFAULT_FILL,
+      strokePx: parseFloat(stroke) > 0 ? parseFloat(stroke) : 0,
+      widthPx: parseFloat(stroke) > 0 && parseFloat(width) > 0 ? parseFloat(width) : 0,
       fills: includeFills,
-    };
-  }, [fill, strokeWidth, includeFills]);
+    }),
+    [fill, stroke, width, includeFills],
+  );
 
   // Convert every file whenever the files or options change. The work is
   // synchronous and can be heavy, so yield between files to keep the page alive.
@@ -83,23 +96,29 @@ export function Converter() {
     let cancelled = false;
     const run = async () => {
       await new Promise((r) => setTimeout(r, 200));
-      const next: Record<string, Result> = {};
       for (const item of items) {
         if (cancelled) return;
         const warnings: string[] = [];
+        let result: Result;
         try {
+          const dims = iconDims(item.source);
+          const strokeWidth = options.strokePx
+            ? (options.strokePx * dims.units) / (options.widthPx || dims.px)
+            : undefined;
           const svg = outlineSvg(weldTouchingCaps(item.source), {
-            ...options,
+            fill: options.fill,
+            fills: options.fills,
+            strokeWidth,
             onWarning: (w: SvgWarning) => warnings.push(w.message),
           });
-          next[item.id] = { ok: true, svg, warnings };
+          result = { ok: true, svg, warnings };
         } catch (e) {
-          next[item.id] = {
+          result = {
             ok: false,
             message: e instanceof Error ? e.message : "Could not convert this file",
           };
         }
-        setResults((prev) => ({ ...prev, [item.id]: next[item.id] }));
+        setResults((prev) => ({ ...prev, [item.id]: result }));
         await new Promise((r) => setTimeout(r));
       }
     };
@@ -108,6 +127,22 @@ export function Converter() {
       cancelled = true;
     };
   }, [items, options]);
+
+  const commitWidth = (next: string) => {
+    const nextPx = parseFloat(next);
+    const prevPx =
+      parseFloat(width) > 0
+        ? parseFloat(width)
+        : items[0]
+          ? iconDims(items[0].source).px
+          : 0;
+    const strokePx = parseFloat(stroke);
+    // Linked: the stroke follows the width, so the icon just scales.
+    if (linked && strokePx > 0 && nextPx > 0 && prevPx > 0) {
+      setStroke(round3((strokePx * nextPx) / prevPx));
+    }
+    setWidth(next);
+  };
 
   const removeItem = (id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -122,20 +157,22 @@ export function Converter() {
     setItems([]);
     setResults({});
     setSkipped([]);
+    setInspectId(null);
   };
 
-  // The export size only changes the width and height attributes, so it is
+  // The export width only changes the width and height attributes, so it is
   // applied here rather than re-running the conversion.
   const exported = useMemo(() => {
-    const width = parseFloat(size);
+    const px = parseFloat(width);
     const out: Record<string, string> = {};
     for (const [id, r] of Object.entries(results)) {
-      if (r.ok) out[id] = width > 0 ? applySize(r.svg, width) : r.svg;
+      if (r.ok) out[id] = px > 0 ? applySize(r.svg, px) : r.svg;
     }
     return out;
-  }, [results, size]);
+  }, [results, width]);
 
   const ready = items.filter((i) => exported[i.id] !== undefined);
+  const inspected = items.find((i) => i.id === inspectId);
 
   const downloadOne = (item: Item) => {
     const svg = exported[item.id];
@@ -224,59 +261,36 @@ export function Converter() {
         </p>
       )}
 
-      <section className="mt-6 flex flex-wrap items-end gap-x-6 gap-y-4 rounded-xl border border-neutral-200 px-5 py-4 text-sm">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-neutral-500">Fill color</span>
-          <span className="flex items-center gap-2">
-            <input
-              value={fill}
-              onChange={(e) => setFill(e.target.value)}
-              spellCheck={false}
-              className="w-32 rounded-lg border border-neutral-300 px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-neutral-900"
-            />
-            {fill !== "currentColor" && (
-              <button
-                onClick={() => setFill("currentColor")}
-                className="text-neutral-500 underline underline-offset-2 hover:text-neutral-900"
-              >
-                reset
-              </button>
-            )}
-          </span>
-        </label>
-
-        <label className="flex flex-col gap-1.5">
-          <span className="text-neutral-500">Stroke width</span>
-          <input
-            value={strokeWidth}
-            onChange={(e) => setStrokeWidth(e.target.value)}
-            inputMode="decimal"
-            placeholder="keep original"
-            title="In the icon's own units, e.g. 1.5 on a 24 grid"
-            className="w-32 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-[13px] outline-none placeholder:text-neutral-400 focus:border-neutral-900"
+      <section className="mt-6 rounded-2xl border border-neutral-200 px-5 py-5">
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-5">
+          <ColorField value={fill} onChange={setFill} />
+          <div className="w-2" />
+          <NumberField name="Width" value={width} onCommit={commitWidth} />
+          <LinkToggle linked={linked} onChange={setLinked} />
+          <NumberField
+            name="Stroke"
+            value={stroke}
+            onCommit={(v) => setStroke(v)}
           />
-        </label>
+          <div className="w-4" />
+          <ZoomSlider value={zoom} onChange={setZoom} />
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-neutral-500">Icon size (px)</span>
-          <input
-            value={size}
-            onChange={(e) => setSize(e.target.value)}
-            inputMode="decimal"
-            placeholder="keep original"
-            title="Width of the exported icon; height follows the aspect ratio"
-            className="w-32 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-[13px] outline-none placeholder:text-neutral-400 focus:border-neutral-900"
-          />
-        </label>
-
-        <label className="flex items-center gap-2 pb-1.5">
+        <label className="mt-5 flex items-start gap-2.5 text-sm">
           <input
             type="checkbox"
             checked={includeFills}
             onChange={(e) => setIncludeFills(e.target.checked)}
-            className="size-4 accent-neutral-900"
+            className="mt-0.5 size-4 shrink-0 accent-neutral-900"
           />
-          <span className="text-neutral-700">Keep shapes that are already filled</span>
+          <span>
+            <span className="text-neutral-900">Include shapes that are already filled</span>
+            <span className="block text-neutral-500">
+              Some icons mix strokes with solid parts, like a filled dot. Leave
+              this on to keep them; turn it off to export only what was drawn
+              with strokes.
+            </span>
+          </span>
         </label>
       </section>
 
@@ -284,6 +298,7 @@ export function Converter() {
         <ul className="mt-8 grid gap-4 sm:grid-cols-2">
           {items.map((item) => {
             const r = results[item.id];
+            const after = exported[item.id];
             return (
               <li
                 key={item.id}
@@ -306,11 +321,18 @@ export function Converter() {
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-3">
-                  <Preview label="Before" src={toDataUri(item.source)} />
+                  <Preview
+                    label="Before"
+                    src={toDataUri(item.source)}
+                    zoom={zoom}
+                    onOpen={() => setInspectId(item.id)}
+                  />
                   <Preview
                     label="After"
-                    src={exported[item.id] ? toDataUri(exported[item.id]) : undefined}
+                    src={after ? toDataUri(after) : undefined}
                     pending={!r}
+                    zoom={zoom}
+                    onOpen={after ? () => setInspectId(item.id) : undefined}
                   />
                 </div>
 
@@ -325,25 +347,33 @@ export function Converter() {
                   </ul>
                 )}
 
-                <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-neutral-500">
                   <span>
                     {formatBytes(byteLength(item.source))}
-                    {exported[item.id] !== undefined && (
+                    {after !== undefined && (
                       <>
                         {" "}
-                        → {formatBytes(byteLength(exported[item.id]))}
-                        {dimensions(exported[item.id]) &&
-                          ` · ${dimensions(exported[item.id])}`}
+                        → {formatBytes(byteLength(after))}
+                        {dimensions(after) && ` · ${dimensions(after)}`}
                       </>
                     )}
                   </span>
-                  <button
-                    onClick={() => downloadOne(item)}
-                    disabled={!r?.ok}
-                    className="rounded-lg border border-neutral-300 px-3 py-1.5 text-[13px] font-medium text-neutral-900 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
-                  >
-                    Download
-                  </button>
+                  <span className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => setInspectId(item.id)}
+                      disabled={after === undefined}
+                      className="rounded-lg border border-neutral-300 px-3 py-1.5 text-[13px] font-medium text-neutral-900 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                      Inspect
+                    </button>
+                    <button
+                      onClick={() => downloadOne(item)}
+                      disabled={after === undefined}
+                      className="rounded-lg border border-neutral-300 px-3 py-1.5 text-[13px] font-medium text-neutral-900 hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                      Download
+                    </button>
+                  </span>
                 </div>
               </li>
             );
@@ -377,6 +407,15 @@ export function Converter() {
           </div>
         </div>
       )}
+
+      {inspected && exported[inspected.id] !== undefined && (
+        <Inspector
+          name={inspected.name}
+          before={inspected.source}
+          after={exported[inspected.id]}
+          onClose={() => setInspectId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -385,22 +424,37 @@ function Preview({
   label,
   src,
   pending,
+  zoom,
+  onOpen,
 }: {
   label: string;
   src?: string;
   pending?: boolean;
+  zoom: number;
+  onOpen?: () => void;
 }) {
   return (
     <div>
       <p className="mb-1.5 text-xs text-neutral-400">{label}</p>
-      <div className="flex aspect-square items-center justify-center rounded-lg bg-neutral-50 p-6">
+      <button
+        type="button"
+        onClick={onOpen}
+        disabled={!onOpen}
+        aria-label={`Inspect ${label.toLowerCase()}`}
+        className="flex aspect-square w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-lg bg-neutral-50 disabled:cursor-default"
+      >
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt="" className="size-full object-contain" />
+          <img
+            src={src}
+            alt=""
+            className="max-w-none shrink-0 object-contain"
+            style={{ width: `${68 * zoom}%`, height: `${68 * zoom}%` }}
+          />
         ) : pending ? (
           <span className="text-xs text-neutral-400">…</span>
         ) : null}
-      </div>
+      </button>
     </div>
   );
 }
