@@ -51,24 +51,18 @@ function splitSubpaths(segs: Segment[]): Sub[] {
   const subs: Sub[] = [];
   let cur: Sub | null = null;
   let start: Pt = [0, 0];
-  let last: Pt = [0, 0];
   for (const seg of segs) {
     if (seg.type === "M") {
       cur = { segs: [seg], closed: false };
       subs.push(cur);
-      start = last = pt(seg);
+      start = pt(seg);
     } else {
       if (!cur || cur.closed) {
         cur = { segs: [{ type: "M", x: start[0], y: start[1] }], closed: false };
         subs.push(cur);
       }
       cur.segs.push(seg);
-      if (seg.type === "Z") {
-        cur.closed = true;
-        last = start;
-      } else {
-        last = pt(seg);
-      }
+      if (seg.type === "Z") cur.closed = true;
     }
   }
   return subs;
