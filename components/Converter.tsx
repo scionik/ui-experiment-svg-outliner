@@ -109,6 +109,11 @@ export function Converter() {
             fill: options.fill,
             fills: options.fills,
             strokeWidth,
+            // Tighter than unstroke's defaults (units / 2400 and twice that):
+            // at those, a tiny round shape like a dot comes out as a visibly
+            // faceted polygon when zoomed in.
+            tolerance: dims.units / 80000,
+            fitTolerance: dims.units / 16000,
             onWarning: (w: SvgWarning) => warnings.push(w.message),
           });
           result = { ok: true, svg, warnings };
