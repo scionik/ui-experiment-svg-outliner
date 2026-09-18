@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { outlineSvg, type SvgWarning } from "unstroke";
+import { weldTouchingCaps } from "@/lib/weld";
 
 type Item = { id: string; name: string; source: string };
 
@@ -77,7 +78,7 @@ export function Converter() {
         if (cancelled) return;
         const warnings: string[] = [];
         try {
-          const svg = outlineSvg(item.source, {
+          const svg = outlineSvg(weldTouchingCaps(item.source), {
             ...options,
             onWarning: (w: SvgWarning) => warnings.push(w.message),
           });
