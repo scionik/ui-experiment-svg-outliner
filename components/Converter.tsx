@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { outlineSvg, type SvgWarning } from "unstroke";
 import { weldTouchingCaps } from "@/lib/weld";
+import { applySize } from "@/lib/resize";
 
 type Item = { id: string; name: string; source: string };
 
@@ -17,6 +18,14 @@ const formatBytes = (n: number) =>
   n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
 
 const byteLength = (s: string) => new TextEncoder().encode(s).length;
+
+/** "24 × 24 px" from the root tag's width and height, if it has both. */
+const dimensions = (svg: string) => {
+  const tag = svg.match(/<svg\b[^>]*>/)?.[0] ?? "";
+  const w = tag.match(/\swidth="([\d.]+)(?:px)?"/)?.[1];
+  const h = tag.match(/\sheight="([\d.]+)(?:px)?"/)?.[1];
+  return w && h ? `${w} × ${h} px` : "";
+};
 
 const download = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
@@ -35,6 +44,7 @@ export function Converter() {
 
   const [fill, setFill] = useState("currentColor");
   const [strokeWidth, setStrokeWidth] = useState("");
+  const [size, setSize] = useState("");
   const [includeFills, setIncludeFills] = useState(true);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -114,11 +124,22 @@ export function Converter() {
     setSkipped([]);
   };
 
-  const ready = items.filter((i) => results[i.id]?.ok);
+  // The export size only changes the width and height attributes, so it is
+  // applied here rather than re-running the conversion.
+  const exported = useMemo(() => {
+    const width = parseFloat(size);
+    const out: Record<string, string> = {};
+    for (const [id, r] of Object.entries(results)) {
+      if (r.ok) out[id] = width > 0 ? applySize(r.svg, width) : r.svg;
+    }
+    return out;
+  }, [results, size]);
+
+  const ready = items.filter((i) => exported[i.id] !== undefined);
 
   const downloadOne = (item: Item) => {
-    const r = results[item.id];
-    if (r?.ok) download(new Blob([r.svg], { type: "image/svg+xml" }), item.name);
+    const svg = exported[item.id];
+    if (svg !== undefined) download(new Blob([svg], { type: "image/svg+xml" }), item.name);
   };
 
   const downloadAll = async () => {
@@ -126,14 +147,12 @@ export function Converter() {
     const zip = new JSZip();
     const used = new Set<string>();
     for (const item of ready) {
-      const r = results[item.id];
-      if (!r?.ok) continue;
       let name = item.name;
       for (let n = 2; used.has(name); n++) {
         name = item.name.replace(/(\.svg)?$/i, `-${n}$1`);
       }
       used.add(name);
-      zip.file(name, r.svg);
+      zip.file(name, exported[item.id]);
     }
     download(await zip.generateAsync({ type: "blob" }), "outlined-icons.zip");
   };
@@ -227,12 +246,25 @@ export function Converter() {
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-neutral-500">Override stroke width</span>
+          <span className="text-neutral-500">Stroke width</span>
           <input
             value={strokeWidth}
             onChange={(e) => setStrokeWidth(e.target.value)}
             inputMode="decimal"
             placeholder="keep original"
+            title="In the icon's own units, e.g. 1.5 on a 24 grid"
+            className="w-32 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-[13px] outline-none placeholder:text-neutral-400 focus:border-neutral-900"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-neutral-500">Icon size (px)</span>
+          <input
+            value={size}
+            onChange={(e) => setSize(e.target.value)}
+            inputMode="decimal"
+            placeholder="keep original"
+            title="Width of the exported icon; height follows the aspect ratio"
             className="w-32 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-[13px] outline-none placeholder:text-neutral-400 focus:border-neutral-900"
           />
         </label>
@@ -277,7 +309,7 @@ export function Converter() {
                   <Preview label="Before" src={toDataUri(item.source)} />
                   <Preview
                     label="After"
-                    src={r?.ok ? toDataUri(r.svg) : undefined}
+                    src={exported[item.id] ? toDataUri(exported[item.id]) : undefined}
                     pending={!r}
                   />
                 </div>
@@ -296,7 +328,14 @@ export function Converter() {
                 <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
                   <span>
                     {formatBytes(byteLength(item.source))}
-                    {r?.ok && <> → {formatBytes(byteLength(r.svg))}</>}
+                    {exported[item.id] !== undefined && (
+                      <>
+                        {" "}
+                        → {formatBytes(byteLength(exported[item.id]))}
+                        {dimensions(exported[item.id]) &&
+                          ` · ${dimensions(exported[item.id])}`}
+                      </>
+                    )}
                   </span>
                   <button
                     onClick={() => downloadOne(item)}
